@@ -1,5 +1,8 @@
 # cat-collage
 
+
+<img src="assets/stepfunction.png" alt="drawing" width="700"/>
+
 ## Project structure
 
 This is a CDK project written in Typescript. It follows a normal NodeJS project structure. You can find the infrastructure definition
@@ -54,5 +57,6 @@ To try the project, simply drop a picture in the input S3 bucket and in a few se
 
 You can see the differences between the infrastructure defined in your code and the infrastructure that exists in your AWS account:
 ```
+<<<<<<< HEAD
 docker run -it --env-file .env -v $PWD:/home/node cat-collage-cdk cdk diff
 ```
