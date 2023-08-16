@@ -1,5 +1,8 @@
 # cat-collage
 
+
+<img src="assets/stepfunction.png" alt="drawing" width="700"/>
+
 ## Project structure
 
 This is a CDK project written in Typescript. It follows a normal NodeJS project structure. You can find the infrastructure definition
