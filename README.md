@@ -13,7 +13,7 @@ when you run `cdk deploy` (see the next section).
 
 Create a .env file with your AWS credentials:
 ```
-cd seecats
+cd cat-collage
 cp .env.example .env
 nano .env
 ```
@@ -21,25 +21,25 @@ nano .env
 To run this project, you will need CDK. You can install it on your system or just use the `Dockerfile.cdk` image, which includes the AWS CLI as well:
 
 ```
-sudo docker build -t seecats-cdk -f Dockerfile.cdk .
+sudo docker build -t cat-collage-cdk -f Dockerfile.cdk .
 ```
 
 Once you have the Docker image built, you can run CDK commands:
 
 ```
-sudo docker run -it --env-file .env -v $PWD:/home/node seecats-cdk cdk help
+sudo docker run -it --env-file .env -v $PWD:/home/node cat-collage-cdk cdk help
 ```
 
 The first time you run this project, you will need to bootstrap your CDK environment in your AWS account:
 
 ```
-docker run -it --env-file .env -v $PWD:/home/node seecats-cdk cdk bootstrap
+docker run -it --env-file .env -v $PWD:/home/node cat-collage-cdk cdk bootstrap
 ```
 
 Once this process is completed, you will be able to deploy the infrastructure with:
 
 ```
-docker run -it --env-file .env -v $PWD:/home/node -v /var/run/docker.sock:/var/run/docker.sock seecats-cdk cdk deploy --parameters NotificationPhone=<<YOUR_PHONE_NUMBER_WITH_PREFIX or 0>>
+docker run -it --env-file .env -v $PWD:/home/node -v /var/run/docker.sock:/var/run/docker.sock cat-collage-cdk cdk deploy --parameters NotificationPhone=<<YOUR_PHONE_NUMBER_WITH_PREFIX or 0>>
 ```
 Note: we need to bind the Docker socket so that the Docker installed inside the container can communicate with the Docker daemon installed in the host system. The reason for this is that CDK needs to build the Docker image of the Lambda function that generates the collage.
 
@@ -54,5 +54,5 @@ To try the project, simply drop a picture in the input S3 bucket and in a few se
 
 You can see the differences between the infrastructure defined in your code and the infrastructure that exists in your AWS account:
 ```
-docker run -it --env-file .env -v $PWD:/home/node seecats-cdk cdk diff
+docker run -it --env-file .env -v $PWD:/home/node cat-collage-cdk cdk diff
 ```
