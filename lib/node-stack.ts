@@ -7,7 +7,7 @@ import { Construct } from 'constructs';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { SnsPublish, LambdaInvoke } from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import { Choice, Condition, CustomState, Pass, StateMachine, Parallel, DefinitionBody, TaskInput, LogLevel } from 'aws-cdk-lib/aws-stepfunctions';
-import { BlockPublicAccess, Bucket, BucketAccessControl } from 'aws-cdk-lib/aws-s3';
+import { BlockPublicAccess, Bucket, BucketAccessControl, HttpMethods } from 'aws-cdk-lib/aws-s3';
 import { PolicyStatement, Role, ServicePrincipal } from 'aws-cdk-lib/aws-iam';
 import { Subscription, SubscriptionProtocol } from 'aws-cdk-lib/aws-sns';
 import { DockerImageCode, DockerImageFunction } from 'aws-cdk-lib/aws-lambda';
@@ -16,38 +16,11 @@ import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { Rule } from 'aws-cdk-lib/aws-events';
 import { SfnStateMachine } from 'aws-cdk-lib/aws-events-targets';
 import { ReadWriteType, Trail } from 'aws-cdk-lib/aws-cloudtrail';
-
-interface RekognitionDetectLabelsProps {
-  bucket: string
-}
-
-class RekognitionDetectLabels extends CustomState {
-  constructor(scope: Construct, id: string, props: RekognitionDetectLabelsProps) {
-    super(scope, id, {
-      stateJson: {
-        Type: 'Task',
-        Resource: 'arn:aws:states:::aws-sdk:rekognition:detectLabels',
-        Parameters: {
-          "Image": {
-            "S3Object": {
-              "Bucket": props.bucket,
-              "Name.$": "$.image"
-            }
-          },
-          "Settings": {
-            "GeneralLabels": {
-              "LabelInclusionFilters": [
-                "Cat"
-              ]
-            }
-          }
-        },
-        ResultPath: '$.rekognitionOutput'
-      }
-    });
-  }
-}
-
+import { RekognitionDetectLabels } from './rekognition-detect-labels';
+import { Cors, LambdaIntegration, Period, RestApi } from 'aws-cdk-lib/aws-apigateway';
+import { BucketDeployment, Source } from 'aws-cdk-lib/aws-s3-deployment';
+import { Distribution, OriginAccessIdentity } from 'aws-cdk-lib/aws-cloudfront';
+import { S3Origin } from 'aws-cdk-lib/aws-cloudfront-origins';
 
 export class NodeStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
@@ -58,47 +31,92 @@ export class NodeStack extends Stack {
       description: "Phone number to send SMS notifications to"
     });
 
+    const inputBucket = this.createInputBucket();
+    const outputBucket = this.createOutputBucket();
+
+    const snsTopic = this.createSNSTopic(notificationPhoneNumber);
+
+    const generateCollageLambdaFunction = this.createGenerateCollageLambda(inputBucket, outputBucket);
+    
+    const stateMachine = this.createStateMachine(generateCollageLambdaFunction, inputBucket, snsTopic);
+    this.connectInputBucketToStateMachine(inputBucket, stateMachine);
+
+    this.createGetUploadAPI(inputBucket);
+
+    new CfnOutput(this, 'Output Bucket URL', { value: outputBucket.bucketRegionalDomainName + '/collage.png' });
+    new CfnOutput(this, 'WebsiteURL', {
+      value: outputBucket.bucketWebsiteUrl,
+      description: 'The URL to access the index.html file',
+    });
+  }
+
+  /**
+   * The input bucket is the bucket in which the users will upload
+   * their pictures.
+   * Those files will be processed by a Step Function Workflow which
+   * will generate a collage with the uploaded picture and the pictures
+   * uploaded previously.
+   * @returns Input S3 Bucket,
+   */
+  private createInputBucket(): Bucket {
     // Create the input Bucket. Our users will be able to upload
     // here their pictures and the algoritm will evaluate whether
     // the picture contains a cat or not.
     const inputBucket = new Bucket(this, 'SeeCatsInputs', {
       eventBridgeEnabled: true
     });
-    
-    // Create the output Bucket. We will store here the collage of cats.
-    const outputBucket = new Bucket(this, 'SeeCatsOutput', {
-      blockPublicAccess: BlockPublicAccess.BLOCK_ACLS
+    // Enable CORS for the S3 bucket
+    inputBucket.addCorsRule({
+      allowedOrigins: ['*'], // Allow any origin. Customize this as needed.
+      allowedMethods: [HttpMethods.PUT], // Allow PUT requests
+      allowedHeaders: ['*'] // Allow any headers
     });
-    outputBucket.grantPublicAccess('collage.png');
 
-    const snsTopic = this.createSNSTopic(notificationPhoneNumber);
-
-    const generateCollageLambdaFunction = this.createLambdaResources(inputBucket, outputBucket);
-    
-    const stateMachine = this.createStateMachine(generateCollageLambdaFunction, inputBucket, snsTopic);
-
-    this.connectInputBucketToStateMachine(inputBucket, stateMachine);
-
-    new CfnOutput(this, 'Output Bucket URL', { value: outputBucket.bucketRegionalDomainName + '/collage.png' });
+    return inputBucket;
   }
 
-  private connectInputBucketToStateMachine(inputBucket: Bucket, stateMachine: StateMachine) {
-    // EventBridge rule to trigger the Step Function when a new object is uploaded to the input bucket.
-    const rule = new Rule(this, 'RunStepFunctionWhenFileUploaded', {
-      eventPattern: {
-        source: ['aws.s3'],
-        detailType: ['Object Created'],
-        detail: {
-          bucket: {
-            name: [inputBucket.bucketName],
-          }
-        },
+  /**
+   * This function creates the output bucket and a CloudFront distribution.
+   * The bucket will store two files:
+   * - The static webpage.
+   * - The collage generated by the Step Function.
+   * 
+   * The goal of the CloudFront distribution is to allow us to serve the
+   * static webpage with HTTPS.
+   * Note that the collage will not be served from CloudFront as it would
+   * cache it.
+   * 
+   * @returns The output S3 Bucket.
+   */
+  private createOutputBucket(): Bucket {
+    // Create the output Bucket. We will store here the collage of cats.
+    const outputBucket = new Bucket(this, 'SeeCatsOutput', {
+      blockPublicAccess: BlockPublicAccess.BLOCK_ACLS,
+      websiteIndexDocument: 'index.html'
+    });
+    new BucketDeployment(this, 'StaticWebpageDeployment', {
+      destinationBucket: outputBucket,
+      sources: [Source.asset(path.resolve(__dirname, '../static-website'))],
+      prune: false, // To keep the collage file.
+    })
+    outputBucket.grantPublicAccess('collage.png');
+    outputBucket.grantPublicAccess('index.html');
+
+    const originAccessIdentity = new OriginAccessIdentity(this, 'OriginAccessIdentity');
+    outputBucket.grantRead(originAccessIdentity);
+
+    const distribution = new Distribution(this, 'WebsiteDistribution', {
+      defaultBehavior: {
+        origin: new S3Origin(outputBucket, { originAccessIdentity }),
       },
     });
 
-    rule.addTarget(
-      new SfnStateMachine(stateMachine)
-    );
+    // Output the CloudFront domain name
+    new CfnOutput(this, 'CloudFrontDomain', {
+      value: distribution.domainName,
+    });
+
+    return outputBucket;
   }
 
   private createSNSTopic(notificationPhoneNumber: CfnParameter): sns.Topic {
@@ -117,8 +135,17 @@ export class NodeStack extends Stack {
     return snsTopic;
   }
 
-  private createLambdaResources(inputBucket: Bucket, outputBucket: Bucket): DockerImageFunction {
-    // Log group.
+  /**
+   * This function creates a Lambda function whose code is colated in the
+   * generate-collage directory.
+   * 
+   * The Lambda function expects an image path as input. This image should
+   * be stored in the inputBucket. The Lambda function will generate the
+   * collage an store the result in the outputBucket.
+   * 
+   * @returns A Lambda function.
+   */
+  private createGenerateCollageLambda(inputBucket: Bucket, outputBucket: Bucket): DockerImageFunction {
     const logGroup = new LogGroup(this, 'GenerateCollageLogGroup', {
       retention: RetentionDays.ONE_DAY,
     });
@@ -152,6 +179,17 @@ export class NodeStack extends Stack {
     return generateCollageLambdaFunction;
   }
 
+  /**
+   * This function creates Step Function Workflow. The workflow expects the
+   * path of an image as input. This image should be stored in the input
+   * bucket. The workflow analyzes the content of the picture with AWS
+   * Rekognition to find a cat. If a cat is found, the Lambda function that
+   * generates the collage is executed.
+   * @param generateCollageLambdaFunction 
+   * @param inputBucket 
+   * @param snsTopic 
+   * @returns 
+   */
   private createStateMachine(
     generateCollageLambdaFunction: DockerImageFunction,
     inputBucket: Bucket,
@@ -229,6 +267,120 @@ export class NodeStack extends Stack {
     });
 
     return stateMachine;
+  }
+
+  /**
+   * This function creates an EventBridge rule that will detect when
+   * a picture is uploaded in the inputBucket and it will trigger the
+   * Step Function that analyzes the image to find a cat and creates
+   * the collage.
+   * @param inputBucket 
+   * @param stateMachine 
+   */
+  private connectInputBucketToStateMachine(inputBucket: Bucket, stateMachine: StateMachine) {
+    // EventBridge rule to trigger the Step Function when a new object is uploaded to the input bucket.
+    const rule = new Rule(this, 'RunStepFunctionWhenFileUploaded', {
+      eventPattern: {
+        source: ['aws.s3'],
+        detailType: ['Object Created'],
+        detail: {
+          bucket: {
+            name: [inputBucket.bucketName],
+          }
+        },
+      },
+    });
+
+    rule.addTarget(
+      new SfnStateMachine(stateMachine)
+    );
+  }
+
+  /**
+   * This function will make it possible to our frontend to upload images to the
+   * input bucket.
+   * 
+   * This function will generate an API Gateway endpoint /upload-endpoint that will
+   * trigger a Lambda function (implemented in get-upload-endpoint). This Lambda
+   * function will return a presigned URL. The frontend will be able to execute an
+   * HTTP PUT request to that presigned URL to upload the file directly to the
+   * input bucket. This upload will trigger the Step Function.
+   * 
+   * @param inputBucket 
+   * @returns 
+   */
+  private createGetUploadAPI(inputBucket: Bucket): DockerImageFunction {
+    // Log group.
+    const logGroup = new LogGroup(this, 'GetUploadEndpointLogGroup', {
+      retention: RetentionDays.ONE_DAY,
+    });
+    
+    // We're going to allow the Lambda function to write in the bucket.
+    // That way, it will be able to generate the upload endpoint.
+    const lambdaRole = new Role(this, 'GetUploadEndpointLambdaRole', {
+      assumedBy: new ServicePrincipal('lambda.amazonaws.com'),
+    });
+    lambdaRole.addToPolicy(
+      new PolicyStatement({
+        actions: ['logs:CreateLogStream', 'logs:PutLogEvents'],
+        resources: [logGroup.logGroupArn],
+      })
+    );
+    // The Lambda need a write permission to be able to create the
+    // presigned URL.
+    inputBucket.grantWrite(lambdaRole);
+
+    // Create the Lambda function
+    const getUploadEndpointLambdaFunction = new DockerImageFunction(this, 'GetUploadEndpoint', {
+      code: DockerImageCode.fromImageAsset(path.join(__dirname, '/../get-upload-endpoint')),
+      environment: {
+        'INPUT_BUCKET': inputBucket.bucketName
+      },
+      role: lambdaRole,
+      timeout: Duration.seconds(2),
+      memorySize: 128
+    });
+
+
+    this.createAPIGatewayForGetUploadLambda(getUploadEndpointLambdaFunction);
+
+    return getUploadEndpointLambdaFunction;
+  }
+
+  private createAPIGatewayForGetUploadLambda(lambda: DockerImageFunction) {
+    // API Gateway
+    const api = new RestApi(this, 'UploadsApi', {
+      defaultCorsPreflightOptions: {
+        allowOrigins: ['*'], // Allow requests from any origin within amazonaws.com
+        allowMethods: Cors.ALL_METHODS
+      }
+    });
+
+    // Throttling and quota, to avoid abuse.
+    const usagePlan = api.addUsagePlan('UploadUsagePlan', {
+      throttle: {
+        rateLimit: 2,   // Change as needed (requests per second)
+        burstLimit: 10
+      },
+      quota: {
+        limit: 20,     // Change as needed (requests per day)
+        period: Period.DAY
+      }
+    });
+
+    usagePlan.addApiStage({
+      stage: api.deploymentStage
+    });
+
+    const uploadResource = api.root.addResource('upload-endpoint');
+    const lambdaIntegration = new LambdaIntegration(lambda);
+
+    uploadResource.addMethod('GET', lambdaIntegration);
+
+    new CfnOutput(this, 'ApiEndpointOutput', {
+      value: api.url + 'upload-endpoint',
+      description: 'POST endpoint for uploading files'
+    });
   }
 }
 

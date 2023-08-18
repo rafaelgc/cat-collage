@@ -3,6 +3,8 @@
 
 <img src="assets/stepfunction.png" alt="drawing" width="700"/>
 
+## How does it work
+
 ## Project structure
 
 This is a CDK project written in Typescript. It follows a normal NodeJS project structure. You can find the infrastructure definition
@@ -11,6 +13,8 @@ under the `lib` folder.
 Inside the `generate-collage`, you will find the implementation of the Lambda function that generates the collage.
 This code is written in Python, and a Dockerfile is provided to run it in AWS Lambda. CDK will handle the building process
 when you run `cdk deploy` (see the next section).
+
+Inside the `get-upload-endpoint`
 
 ## Set up
 
