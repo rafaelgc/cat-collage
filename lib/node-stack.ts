@@ -1,7 +1,5 @@
-import { CfnOutput, CfnParameter, Duration, Stack, StackProps } from 'aws-cdk-lib';
+import { CfnOutput, CfnParameter, Duration, Stack, StackProps, Fn } from 'aws-cdk-lib';
 import * as sns from 'aws-cdk-lib/aws-sns';
-import * as subs from 'aws-cdk-lib/aws-sns-subscriptions';
-import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
 
 import * as lambda from 'aws-cdk-lib/aws-lambda';
@@ -9,13 +7,13 @@ import { SnsPublish, LambdaInvoke } from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import { Choice, Condition, CustomState, Pass, StateMachine, Parallel, DefinitionBody, TaskInput, LogLevel } from 'aws-cdk-lib/aws-stepfunctions';
 import { BlockPublicAccess, Bucket, BucketAccessControl, HttpMethods } from 'aws-cdk-lib/aws-s3';
 import { PolicyStatement, Role, ServicePrincipal } from 'aws-cdk-lib/aws-iam';
+import { Certificate } from 'aws-cdk-lib/aws-certificatemanager';
 import { Subscription, SubscriptionProtocol } from 'aws-cdk-lib/aws-sns';
 import { DockerImageCode, DockerImageFunction } from 'aws-cdk-lib/aws-lambda';
 import path = require('path');
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { Rule } from 'aws-cdk-lib/aws-events';
 import { SfnStateMachine } from 'aws-cdk-lib/aws-events-targets';
-import { ReadWriteType, Trail } from 'aws-cdk-lib/aws-cloudtrail';
 import { RekognitionDetectLabels } from './rekognition-detect-labels';
 import { Cors, LambdaIntegration, Period, RestApi } from 'aws-cdk-lib/aws-apigateway';
 import { BucketDeployment, Source } from 'aws-cdk-lib/aws-s3-deployment';
@@ -31,8 +29,21 @@ export class NodeStack extends Stack {
       description: "Phone number to send SMS notifications to"
     });
 
+    const customDomain = new CfnParameter(this, "CustomDomain", {
+      type: "String",
+      description: "Custom domain to use instead of the domain provided by CloudFront.",
+      default: ""
+    });
+
+    const certificateArn = new CfnParameter(this, "CertificateARN", {
+      type: "String",
+      description: "Certificate ARN to enable HTTPS on the custom domain.",
+      default: ""
+    });
+
     const inputBucket = this.createInputBucket();
     const outputBucket = this.createOutputBucket();
+    this.createPublicWebpage(outputBucket, customDomain, certificateArn);
 
     const snsTopic = this.createSNSTopic(notificationPhoneNumber);
 
@@ -94,29 +105,45 @@ export class NodeStack extends Stack {
       blockPublicAccess: BlockPublicAccess.BLOCK_ACLS,
       websiteIndexDocument: 'index.html'
     });
+    // A BucketDeployment will synchronize a local folder with a S3 bucket.
+    // Here I'm just synchronizing HTML files (the static web page). I explicitly
+    // set the charset to UTF-8, otherwise emojis won't work.
     new BucketDeployment(this, 'StaticWebpageDeployment', {
       destinationBucket: outputBucket,
       sources: [Source.asset(path.resolve(__dirname, '../static-website'))],
       prune: false, // To keep the collage file.
+      include: ['*.html'],
+      contentType: 'text/html; charset=UTF-8'
     })
     outputBucket.grantPublicAccess('collage.png');
     outputBucket.grantPublicAccess('index.html');
+    return outputBucket;
+  }
 
+  private createPublicWebpage(bucketWithPageContents: Bucket, customDomain: CfnParameter, certificateArn: CfnParameter) {
     const originAccessIdentity = new OriginAccessIdentity(this, 'OriginAccessIdentity');
-    outputBucket.grantRead(originAccessIdentity);
+    bucketWithPageContents.grantRead(originAccessIdentity);
+
+    let customDomainAttrs = {};
+    //if (customDomain?.length && certificateArn?.length && customDomain.length > 0 && certificateArn.length > 0) {
+      //console.log(customDomain.toString(), certificateArn.toString())
+      customDomainAttrs = {
+        domainNames: [customDomain],
+        certificate: Certificate.fromCertificateArn(this, 'ssl-certificate', certificateArn.valueAsString)
+      }
+    //}
 
     const distribution = new Distribution(this, 'WebsiteDistribution', {
       defaultBehavior: {
-        origin: new S3Origin(outputBucket, { originAccessIdentity }),
+        origin: new S3Origin(bucketWithPageContents, { originAccessIdentity }),
       },
+      ...customDomainAttrs
     });
 
     // Output the CloudFront domain name
     new CfnOutput(this, 'CloudFrontDomain', {
       value: distribution.domainName,
     });
-
-    return outputBucket;
   }
 
   private createSNSTopic(notificationPhoneNumber: CfnParameter): sns.Topic {

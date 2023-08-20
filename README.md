@@ -1,9 +1,18 @@
-# cat-collage
+# The Purrfect Site 🐱
+```
+Cat as a Service project built with 100% serverless technology.
+```
 
-
-<img src="assets/stepfunction.png" alt="drawing" width="700"/>
+Introducing "The Purrfect Site" - where your cat's photo becomes a piece of the internet's coolest collage. Upload your feline friend's pic, and watch them join the ranks of internet-famous kitties
 
 ## How does it work
+
+This is a CDK based project. We have three components:
+- Static webpage, stored in S3 and served by CloudFront.
+- API with a single endpoint to create a presigned URL that makes it possible for the static page to upload a file to the input S3 Bucket.
+- Image processing Step Function, that is triggered when a file is uploaded and generates the collage.
+
+<img src="assets/diagram.png" alt="drawing" height="700"/>
 
 ## Project structure
 
@@ -29,6 +38,11 @@ To run this project, you will need CDK. You can install it on your system or jus
 
 ```
 sudo docker build -t cat-collage-cdk -f Dockerfile.cdk .
+```
+
+Now, install the NodeJS dependencies:
+```shell
+sudo docker run -it --env-file .env -v $PWD:/home/node cat-collage-cdk npm install
 ```
 
 Once you have the Docker image built, you can run CDK commands:
@@ -61,6 +75,5 @@ To try the project, simply drop a picture in the input S3 bucket and in a few se
 
 You can see the differences between the infrastructure defined in your code and the infrastructure that exists in your AWS account:
 ```
-<<<<<<< HEAD
 docker run -it --env-file .env -v $PWD:/home/node cat-collage-cdk cdk diff
 ```
