@@ -5,6 +5,8 @@ Cat as a Service project built with 100% serverless technology.
 
 Introducing "The Purrfect Site" - where your cat's photo becomes a piece of the internet's coolest collage. Upload your feline friend's pic, and watch them join the ranks of internet-famous kitties
 
+[thepurrfect.site](https://thepurrfect.site)
+
 ## How does it work
 
 This is a CDK based project. We have three components:
@@ -29,7 +31,7 @@ Inside the `get-upload-endpoint`
 
 Create a .env file with your AWS credentials:
 ```
-cd cat-collage
+cd the-purrfect-site
 cp .env.example .env
 nano .env
 ```
@@ -37,43 +39,41 @@ nano .env
 To run this project, you will need CDK. You can install it on your system or just use the `Dockerfile.cdk` image, which includes the AWS CLI as well:
 
 ```
-sudo docker build -t cat-collage-cdk -f Dockerfile.cdk .
+sudo docker build -t the-purrfect-site-cdk -f Dockerfile.cdk .
 ```
 
 Now, install the NodeJS dependencies:
 ```shell
-sudo docker run -it --env-file .env -v $PWD:/home/node cat-collage-cdk npm install
+sudo docker run -it --env-file .env -v $PWD:/home/node the-purrfect-site-cdk npm install
 ```
 
 Once you have the Docker image built, you can run CDK commands:
 
 ```
-sudo docker run -it --env-file .env -v $PWD:/home/node cat-collage-cdk cdk help
+sudo docker run -it --env-file .env -v $PWD:/home/node the-purrfect-site-cdk cdk help
 ```
 
 The first time you run this project, you will need to bootstrap your CDK environment in your AWS account:
 
 ```
-docker run -it --env-file .env -v $PWD:/home/node cat-collage-cdk cdk bootstrap
+docker run -it --env-file .env -v $PWD:/home/node the-purrfect-site-cdk cdk bootstrap
 ```
 
-Once this process is completed, you will be able to deploy the infrastructure with:
+Once this process is complete, you will be able to deploy the infrastructure with:
 
 ```
-docker run -it --env-file .env -v $PWD:/home/node -v /var/run/docker.sock:/var/run/docker.sock cat-collage-cdk cdk deploy --parameters NotificationPhone=<<YOUR_PHONE_NUMBER_WITH_PREFIX or 0>>
+docker run -it --env-file .env -v $PWD:/home/node -v /var/run/docker.sock:/var/run/docker.sock the-purrfect-site-cdk cdk deploy
 ```
 Note: we need to bind the Docker socket so that the Docker installed inside the container can communicate with the Docker daemon installed in the host system. The reason for this is that CDK needs to build the Docker image of the Lambda function that generates the collage.
 
-Once the deploy process is finished, some resources will have been created. The most important one are:
+Once the deployment process has finished, some resources will have been created. The most important one are:
 - Input S3 bucket. You can drop your files here and the Step Function will generate a collage.
 - Output S3 bucket. The collage will be generated here.
 - Step Function.
-
-To try the project, simply drop a picture in the input S3 bucket and in a few seconds you will see the collage.png in your output bucket.
 
 ## Useful commands
 
 You can see the differences between the infrastructure defined in your code and the infrastructure that exists in your AWS account:
 ```
-docker run -it --env-file .env -v $PWD:/home/node cat-collage-cdk cdk diff
+docker run -it --env-file .env -v $PWD:/home/node the-purrfect-site-cdk cdk diff
 ```

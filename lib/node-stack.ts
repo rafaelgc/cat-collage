@@ -24,28 +24,11 @@ export class NodeStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
-    const notificationPhoneNumber = new CfnParameter(this, "NotificationPhone", {
-      type: "String",
-      description: "Phone number to send SMS notifications to"
-    });
-
-    const customDomain = new CfnParameter(this, "CustomDomain", {
-      type: "String",
-      description: "Custom domain to use instead of the domain provided by CloudFront.",
-      default: ""
-    });
-
-    const certificateArn = new CfnParameter(this, "CertificateARN", {
-      type: "String",
-      description: "Certificate ARN to enable HTTPS on the custom domain.",
-      default: ""
-    });
-
     const inputBucket = this.createInputBucket();
     const outputBucket = this.createOutputBucket();
-    this.createPublicWebpage(outputBucket, customDomain, certificateArn);
+    this.createPublicWebpage(outputBucket);
 
-    const snsTopic = this.createSNSTopic(notificationPhoneNumber);
+    const snsTopic = this.createSNSTopic();
 
     const generateCollageLambdaFunction = this.createGenerateCollageLambda(inputBucket, outputBucket);
     
@@ -120,18 +103,17 @@ export class NodeStack extends Stack {
     return outputBucket;
   }
 
-  private createPublicWebpage(bucketWithPageContents: Bucket, customDomain: CfnParameter, certificateArn: CfnParameter) {
+  private createPublicWebpage(bucketWithPageContents: Bucket) {
     const originAccessIdentity = new OriginAccessIdentity(this, 'OriginAccessIdentity');
     bucketWithPageContents.grantRead(originAccessIdentity);
 
     let customDomainAttrs = {};
-    //if (customDomain?.length && certificateArn?.length && customDomain.length > 0 && certificateArn.length > 0) {
-      //console.log(customDomain.toString(), certificateArn.toString())
+    if (process.env.CUSTOM_DOMAIN && process.env.CERTIFICATE_ARN) {
       customDomainAttrs = {
-        domainNames: [customDomain],
-        certificate: Certificate.fromCertificateArn(this, 'ssl-certificate', certificateArn.valueAsString)
+        domainNames: [process.env.CUSTOM_DOMAIN],
+        certificate: Certificate.fromCertificateArn(this, 'ssl-certificate', process.env.CERTIFICATE_ARN)
       }
-    //}
+    }
 
     const distribution = new Distribution(this, 'WebsiteDistribution', {
       defaultBehavior: {
@@ -146,16 +128,16 @@ export class NodeStack extends Stack {
     });
   }
 
-  private createSNSTopic(notificationPhoneNumber: CfnParameter): sns.Topic {
+  private createSNSTopic(): sns.Topic {
     // Create an SNS topic
     // We will publish a message to this topic when the uploaded image contains a cat.
     const snsTopic = new sns.Topic(this, 'SeeCatsNotifications');
 
-    if (notificationPhoneNumber.valueAsString.length > 1) {
+    if (process.env.NOTIFICATION_PHONE_NUMBER) {
       new Subscription(this, 'SMSSubscription', {
         topic: snsTopic,
         protocol: SubscriptionProtocol.SMS,
-        endpoint: notificationPhoneNumber.valueAsString
+        endpoint: process.env.NOTIFICATION_PHONE_NUMBER
       });
     }
 
